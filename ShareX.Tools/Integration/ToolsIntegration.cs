@@ -259,6 +259,13 @@ public static class ToolsIntegration
         Show(() => new VideoTrimmerWindow(ffmpegPath, inputFilePath, playNotificationSound, resolveFFmpegPath));
     }
 
+    /// <summary>Edit and blend a lesson recording's screen, face + voice and system-sound tracks.</summary>
+    public static void ShowLessonEditorWindow(string ffmpegPath, string? lessonFilePath = null,
+        Action? playNotificationSound = null, Func<string?>? resolveFFmpegPath = null)
+    {
+        Show(() => new LessonEditorWindow(ffmpegPath, lessonFilePath, playNotificationSound, resolveFFmpegPath));
+    }
+
     public static void ShowVideoThumbnailerWindow(string ffmpegPath, VideoThumbnailOptions options,
         Action<IReadOnlyList<VideoThumbnailInfo>>? thumbnailsTaken = null)
     {

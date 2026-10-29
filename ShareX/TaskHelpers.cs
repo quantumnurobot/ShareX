@@ -1240,6 +1240,17 @@ namespace ShareX
                 () => CheckFFmpeg(taskSettings) ? taskSettings.CaptureSettings.FFmpegOptions.FFmpegPath : null);
         }
 
+        /// <summary>Open the Lesson Editor, optionally with a recorded lesson (.lesson.json).</summary>
+        public static void OpenLessonEditor(TaskSettings taskSettings = null, string lessonFilePath = null)
+        {
+            taskSettings ??= TaskSettings.GetDefaultTaskSettings();
+            ToolsIntegration.ShowLessonEditorWindow(
+                taskSettings.CaptureSettings.FFmpegOptions.FFmpegPath,
+                lessonFilePath,
+                () => PlayNotificationSoundAsync(NotificationSound.ActionCompleted, taskSettings),
+                () => CheckFFmpeg(taskSettings) ? taskSettings.CaptureSettings.FFmpegOptions.FFmpegPath : null);
+        }
+
         public static void OpenVideoThumbnailer(TaskSettings taskSettings = null)
         {
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();

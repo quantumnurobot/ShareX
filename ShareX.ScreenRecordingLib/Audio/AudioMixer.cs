@@ -37,6 +37,11 @@ internal sealed class AudioMixer(RecordingClock clock)
     }
 
     public const int SampleRate = 48_000;
+    /// <summary>Source index of system (loopback) audio, matching WasapiCapture.</summary>
+    public const int SystemSource = 0;
+    /// <summary>Source index of the microphone, matching WasapiCapture.</summary>
+    public const int MicrophoneSource = 1;
+    public const int AllSources = (1 << SystemSource) | (1 << MicrophoneSource);
     private const int Capacity = SampleRate * 2;
     private const int FilterTaps = 32, FilterDelay = FilterTaps / 2, FilterPhases = 128;
     private const double TimestampJitter = 2; // Ignore sub-42 microsecond packet timestamp variations.
@@ -45,7 +50,8 @@ internal sealed class AudioMixer(RecordingClock clock)
     private readonly float[][] samples = [new float[Capacity * 2], new float[Capacity * 2]];
     private readonly long[][] positions = [Enumerable.Repeat(long.MinValue, Capacity).ToArray(), Enumerable.Repeat(long.MinValue, Capacity).ToArray()];
     private readonly StreamState[] streams = [new(), new()];
-    private long consumed;
+    // Each source has its own read position: lesson mode reads the sources into separate files.
+    private readonly long[] consumed = new long[2];
     private long discontinuities;
     public long Discontinuities => Interlocked.Read(ref discontinuities);
     public void MarkDiscontinuity() => Interlocked.Increment(ref discontinuities);
@@ -87,7 +93,7 @@ internal sealed class AudioMixer(RecordingClock clock)
                 int index = (int)Math.Floor(phase);
                 float fraction = (float)(phase - index);
                 long position = stream.NextFrame++;
-                if (position >= consumed && position < consumed + Capacity)
+                if (position >= consumed[source] && position < consumed[source] + Capacity)
                 {
                     float left, right;
                     int offset = (index + FilterTaps) * 2;
@@ -146,7 +152,8 @@ internal sealed class AudioMixer(RecordingClock clock)
         return filters;
     }
 
-    public void Read(long firstFrame, Span<short> destination)
+    /// <summary>Read and consume the sources selected by <paramref name="sourceMask"/>, summed.</summary>
+    public void Read(long firstFrame, Span<short> destination, int sourceMask = AllSources)
     {
         lock (sync)
         {
@@ -158,12 +165,13 @@ internal sealed class AudioMixer(RecordingClock clock)
                 {
                     float value = 0;
                     for (int source = 0; source < 2; source++)
-                        if (positions[source][slot] == position) value += samples[source][slot * 2 + channel];
+                        if ((sourceMask & (1 << source)) != 0 && positions[source][slot] == position) value += samples[source][slot * 2 + channel];
                     // Clipping is deterministic, and NaN from a broken endpoint cannot propagate into PCM.
                     destination[i * 2 + channel] = float.IsFinite(value) ? (short)Math.Clamp((int)(value * 32767), -32768, 32767) : (short)0;
                 }
             }
-            consumed = firstFrame + destination.Length / 2;
+            for (int source = 0; source < 2; source++)
+                if ((sourceMask & (1 << source)) != 0) consumed[source] = firstFrame + destination.Length / 2;
         }
     }
 }

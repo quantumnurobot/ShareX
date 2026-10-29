@@ -34,6 +34,8 @@ using System.Threading.Tasks;
 using MessageBox = ShareX.AvaloniaUI.MessageBox;
 using MessageBoxButtons = ShareX.AvaloniaUI.MessageBoxButtons;
 using MessageBoxIcon = ShareX.AvaloniaUI.MessageBoxIcon;
+using LessonFiles = ShareX.ScreenRecordingLib.LessonFiles;
+using LessonSession = ShareX.ScreenRecordingLib.LessonSession;
 using NativeRecordingOptions = ShareX.ScreenRecordingLib.RecordingOptions;
 using NativeScreenRecorder = ShareX.ScreenRecordingLib.ScreenRecorder;
 
@@ -492,6 +494,7 @@ namespace ShareX
             while (true)
             {
                 bool completed = false;
+                LessonSession lesson = null;
                 NativeRecordingOptions options = new()
                 {
                     OutputPath = recordingPath,
@@ -515,7 +518,8 @@ namespace ShareX
                     CameraMargin = settings.CaptureSettings.ScreenRecordCameraMargin,
                     RequireHardwareEncoder = settings.CaptureSettings.ScreenRecordRequireHardwareEncoder,
                     IncludeCursor = settings.CaptureSettings.ScreenRecordShowCursor,
-                    Duration = settings.CaptureSettings.ScreenRecordFixedDuration ? TimeSpan.FromSeconds(settings.CaptureSettings.ScreenRecordDuration) : TimeSpan.Zero
+                    Duration = settings.CaptureSettings.ScreenRecordFixedDuration ? TimeSpan.FromSeconds(settings.CaptureSettings.ScreenRecordDuration) : TimeSpan.Zero,
+                    SeparateTracks = !isGif && settings.CaptureSettings.ScreenRecordSeparateTracks
                 };
                 nativeRecorder = CreateNativeRecorder(options);
                 try
@@ -557,6 +561,7 @@ namespace ShareX
                         else ScreenRecorder_RecordingStarted();
                         var result = await nativeRecorder.Completion;
                         completed = true;
+                        lesson = result.Lesson;
                         DebugHelper.WriteLine("Native screen recording completed. Encoder: {0}, hardware: {1}, frames: {2}, dropped: {3}, audio discontinuities: {4}",
                             result.Encoder.Name, result.Encoder.IsHardwareAccelerated, result.VideoFrames, result.DroppedVideoFrames, result.AudioDiscontinuities);
                     }
@@ -574,17 +579,33 @@ namespace ShareX
                 if (recordForm.RestartRequested)
                 {
                     FileHelpers.DeleteFile(recordingPath);
+                    LessonFiles.DeleteCompanions(lesson);
                     continue;
                 }
                 TaskHelpers.PlayNotificationSoundAsync(NotificationSound.ActionCompleted, settings);
                 bool aborted = recordForm.Status == ScreenRecordingStatus.Aborted;
-                if (aborted) FileHelpers.DeleteFile(recordingPath);
+                if (aborted)
+                {
+                    FileHelpers.DeleteFile(recordingPath);
+                    LessonFiles.DeleteCompanions(lesson);
+                }
                 if (!aborted && completed)
                 {
                     try { File.Move(recordingPath, path, replaceExisting); }
                     catch (Exception ex)
                     {
                         throw new IOException($"The recording finished, but its output could not be moved to '{path}'. The completed recording is available at '{recordingPath}'.", ex);
+                    }
+                    if (lesson != null)
+                    {
+                        // Name the face, voice and system-sound tracks after the final video and write the lesson file.
+                        try { lesson = LessonFiles.Commit(lesson, path, replaceExisting); }
+                        catch (Exception ex)
+                        {
+                            throw new IOException($"The lesson was recorded to '{path}', but its separate tracks could not be renamed beside it. They are still in '{Path.GetDirectoryName(path)}'.", ex);
+                        }
+                        if (settings.CaptureSettings.ScreenRecordOpenLessonEditor)
+                            TaskHelpers.OpenLessonEditor(settings, LessonFiles.ManifestPath(path));
                     }
                 }
                 return aborted || !completed;

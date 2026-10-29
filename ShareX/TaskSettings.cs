@@ -409,6 +409,10 @@ namespace ShareX
         public string ScreenRecordMicrophoneDeviceId = "";
         public float ScreenRecordMicrophoneGain = 1f;
         public bool ScreenRecordCamera = false;
+        /// <summary>Lesson mode: record the screen, face + voice and system sound as separate editable tracks.</summary>
+        public bool ScreenRecordSeparateTracks = true;
+        /// <summary>Open the Lesson Editor after a lesson-mode recording.</summary>
+        public bool ScreenRecordOpenLessonEditor = true;
         public string ScreenRecordCameraDeviceId = "";
         public ShareX.ScreenRecordingLib.CameraCaptureResolution ScreenRecordCameraResolution = ShareX.ScreenRecordingLib.CameraCaptureResolution.Size1280x720;
         public int ScreenRecordCameraFPS = 30;

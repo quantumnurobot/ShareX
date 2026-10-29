@@ -159,6 +159,7 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
     private unsafe void Run()
     {
         bool com = false, mediaFoundation = false, ownsOutput = false;
+        List<string> ownedCompanions = [];
         try
         {
             NativeMethods.CoInitializeEx(null, COINIT.COINIT_MULTITHREADED).ThrowOnFailure();
@@ -173,18 +174,53 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
             // Reserve the name atomically. Never overwrite or delete a pre-existing user file.
             using (new FileStream(options.OutputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
             ownsOutput = true;
+            // Lesson mode: reserve the companion track files the same way, beside the screen video.
+            bool separate = options.SeparateTracks;
+            string? cameraPath = separate && options.CaptureCamera ? LessonFiles.TrackPath(options.OutputPath, LessonTrackKind.Camera) : null;
+            string? voicePath = separate && options.CaptureMicrophone && !options.CaptureCamera ? LessonFiles.TrackPath(options.OutputPath, LessonTrackKind.Voice) : null;
+            string? systemPath = separate && options.CaptureSystemAudio ? LessonFiles.TrackPath(options.OutputPath, LessonTrackKind.SystemAudio) : null;
+            foreach (string? companion in new[] { cameraPath, voicePath, systemPath })
+            {
+                if (companion == null) continue;
+                using (new FileStream(companion, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                ownedCompanions.Add(companion);
+            }
             using GraphicsDevice graphics = new(targets[0].Monitor);
             using GpuVideoProcessor processor = new(graphics, width, height, options.FramesPerSecond, !options.IsGif);
-            using MediaFoundationWriter? writer = options.IsGif ? null : new(graphics, options, width, height);
+            // In lesson mode the screen file is video only; audio goes to the companion tracks.
+            using MediaFoundationWriter? writer = options.IsGif ? null : new(graphics, options.OutputPath, width, height, options.FramesPerSecond,
+                options.VideoBitrate, options.RequireHardwareEncoder, !separate && options.HasAudio ? options.AudioBitrate : 0);
             using GifWriter? gifWriter = options.IsGif ? new(graphics, options, width, height) : null;
             Encoder = writer?.Encoder ?? GifWriter.Encoder;
             using VideoTexturePool? textures = writer == null ? null : new(graphics, processor, writer.EncoderBindFlags);
             using GraphicsCapture capture = new(graphics, processor, targets, options.IncludeCursor, options.FramesPerSecond);
             using CameraCapture? camera = options.CaptureCamera ? new(graphics, options) : null;
             Camera = camera?.Info;
-            using CameraOverlay? cameraOverlay = camera == null ? null : new(graphics, camera.Info, camera.Subtype,
+            using CameraOverlay? cameraOverlay = camera == null || separate ? null : new(graphics, camera.Info, camera.Subtype,
                 camera.Stride, camera.YuvMatrix, camera.NominalRange, options, width, height);
+            // Lesson mode camera track: the whole camera frame, encoded at the camera's size and rate.
+            using CameraOverlay? trackOverlay = camera == null || !separate ? null : new(graphics, camera.Info, camera.Subtype,
+                camera.Stride, camera.YuvMatrix, camera.NominalRange, options, camera.Info.Width, camera.Info.Height, fullFrame: true);
+            int cameraFps = options.CameraFramesPerSecond;
+            using GpuVideoProcessor? cameraProcessor = trackOverlay == null ? null : new(graphics, camera!.Info.Width, camera.Info.Height, cameraFps, true);
+            cameraProcessor?.Clear(); // Black until the camera's first frame arrives.
+            using MediaFoundationWriter? cameraWriter = cameraProcessor == null ? null : new(graphics, cameraPath!, camera!.Info.Width, camera.Info.Height,
+                cameraFps, CameraBitrate(camera.Info), options.RequireHardwareEncoder, options.CaptureMicrophone ? options.AudioBitrate : 0);
+            using VideoTexturePool? cameraTextures = cameraWriter == null ? null : new(graphics, cameraProcessor!, cameraWriter.EncoderBindFlags);
+            using MediaFoundationWriter? voiceWriter = voicePath == null ? null : new(null, voicePath, 0, 0, 0, 0, false, options.AudioBitrate);
+            using MediaFoundationWriter? systemWriter = systemPath == null ? null : new(null, systemPath, 0, 0, 0, 0, false, options.AudioBitrate);
             AudioMixer mixer = new(clock);
+            List<AudioOutput> audioOutputs = [];
+            if (!separate)
+            {
+                if (writer != null && options.HasAudio) audioOutputs.Add(new(writer, AudioMixer.AllSources));
+            }
+            else
+            {
+                if (systemWriter != null) audioOutputs.Add(new(systemWriter, 1 << AudioMixer.SystemSource));
+                MediaFoundationWriter? microphoneWriter = options.CaptureMicrophone ? cameraWriter ?? voiceWriter : null;
+                if (microphoneWriter != null) audioOutputs.Add(new(microphoneWriter, 1 << AudioMixer.MicrophoneSource));
+            }
             using WasapiCapture? audio = options.HasAudio ? new(options, mixer) : null;
             prepared.TrySetResult();
             if (WaitHandle.WaitAny([stop, begin]) == 0) throw new OperationCanceledException("Recording stopped before capture began.");
@@ -203,10 +239,12 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
             }
             clock.Start(capture.LatestTimestamp);
             Volatile.Write(ref recording, 1);
-            long nextFrame = 0, written = 0, dropped = 0, audioFrame = 0;
+            long nextFrame = 0, written = 0, dropped = 0;
             bool discontinuity = false;
             bool cameraDisabled = false;
             long nextCameraFrame = 0, lastCameraFrame = 0;
+            long cameraTrackFrame = 0, cameraWritten = 0, cameraDropped = 0;
+            bool cameraDiscontinuity = false;
             short[] audioBlock = new short[480 * 2]; // 10 ms, 48 kHz stereo
             using FrameTimer timer = new();
             WaitHandle[] waits = [stop, changed, timer];
@@ -235,7 +273,7 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
                     if (capture.HasEnded) break;
                     if (!capture.HasFrame && RecordingClock.Now - resumeWaitStart > TimeSpan.FromSeconds(10).Ticks)
                         throw new TimeoutException("Windows did not deliver a frame for the moved recording region.");
-                    WriteAudioUntil(writer, mixer, audioBlock, ref audioFrame, clock.Elapsed, options.HasAudio);
+                    WriteAudioUntil(audioOutputs, mixer, audioBlock, clock.Elapsed);
                     lock (sync)
                     {
                         // Keep media time paused until the new region has a frame. A later pause or
@@ -248,6 +286,7 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
                         }
                     }
                     discontinuity = true;
+                    cameraDiscontinuity = true;
                     if (!clock.IsPaused) continue;
                     timer.Arm(TimeSpan.FromMilliseconds(20).Ticks);
                     if (WaitHandle.WaitAny(waits) == 0) break;
@@ -273,7 +312,7 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
                     VideoTexturePool.Slot? slot = null;
                     if (textures == null || textures.TryRent(out slot))
                     {
-                        if (camera != null && !cameraDisabled)
+                        if (cameraOverlay != null && camera != null && !cameraDisabled)
                         {
                             try
                             {
@@ -327,9 +366,58 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
                     else { dropped++; discontinuity = true; }
                     nextFrame++;
                 }
+                if (cameraWriter != null && elapsed >= cameraTrackFrame * TimeSpan.TicksPerSecond / cameraFps)
+                {
+                    // Lesson mode camera track, on its own cadence and the shared media clock.
+                    long dueCameraFrame = elapsed * cameraFps / TimeSpan.TicksPerSecond;
+                    if (cameraWritten > 0 && dueCameraFrame > cameraTrackFrame)
+                    {
+                        cameraDropped += dueCameraFrame - cameraTrackFrame;
+                        cameraTrackFrame = dueCameraFrame;
+                        cameraDiscontinuity = true;
+                    }
+                    if (camera != null && !cameraDisabled)
+                    {
+                        try
+                        {
+                            if (camera.Failure is Exception cameraFailure) throw cameraFailure;
+                            IMFSample? cameraSample = camera.TakeLatestFrame();
+                            if (cameraSample != null)
+                            {
+                                trackOverlay!.Update(cameraSample);
+                                lastCameraFrame = elapsed;
+                            }
+                            if (elapsed - lastCameraFrame > TimeSpan.FromSeconds(10).Ticks)
+                                throw new TimeoutException("The camera did not deliver a new frame for ten seconds.");
+                        }
+                        catch (Exception ex)
+                        {
+                            // Keep the track valid and in sync: continue with black frames and the microphone.
+                            cameraDisabled = true;
+                            trackOverlay!.Disable();
+                            ReportDiagnostic($"Camera stopped; the camera track continues with black video and the microphone. {ex}");
+                            camera.Dispose();
+                        }
+                    }
+                    long cameraTimestamp = cameraTrackFrame * TimeSpan.TicksPerSecond / cameraFps;
+                    long cameraEnd = (cameraTrackFrame + 1) * TimeSpan.TicksPerSecond / cameraFps;
+                    if (cameraTextures!.TryRent(out VideoTexturePool.Slot? cameraSlot))
+                    {
+                        try { cameraProcessor!.Convert(cameraSlot!.View, (uint)cameraTrackFrame, trackOverlay); }
+                        catch { cameraTextures.Return(cameraSlot!); throw; }
+                        using var sample = cameraTextures.CreateSample(cameraSlot!);
+                        cameraWriter.WriteVideo(sample, cameraTimestamp, cameraEnd - cameraTimestamp, cameraDiscontinuity);
+                        cameraWritten++;
+                        cameraDiscontinuity = false;
+                    }
+                    else { cameraDropped++; cameraDiscontinuity = true; }
+                    cameraTrackFrame++;
+                }
                 // Allow 50 ms for WASAPI packets to arrive; timestamps remain aligned with video.
-                WriteAudioUntil(writer, mixer, audioBlock, ref audioFrame, Math.Max(0, clock.Elapsed - TimeSpan.FromMilliseconds(50).Ticks), options.HasAudio);
+                WriteAudioUntil(audioOutputs, mixer, audioBlock, Math.Max(0, clock.Elapsed - TimeSpan.FromMilliseconds(50).Ticks));
                 long remaining = nextFrame * TimeSpan.TicksPerSecond / options.FramesPerSecond - clock.Elapsed;
+                if (cameraWriter != null)
+                    remaining = Math.Min(remaining, cameraTrackFrame * TimeSpan.TicksPerSecond / cameraFps - clock.Elapsed);
                 timer.Arm(remaining);
                 if (WaitHandle.WaitAny(waits) == 0) break;
             }
@@ -339,16 +427,22 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
             Volatile.Write(ref recording, 0);
             duration = Math.Max(duration, options.Duration > TimeSpan.Zero ? Math.Min(clock.Elapsed, options.Duration.Ticks) : clock.Elapsed);
             if (Volatile.Read(ref aborted) != 0) throw new OperationCanceledException("Recording aborted.");
-            WriteAudioUntil(writer, mixer, audioBlock, ref audioFrame, duration, options.HasAudio, true);
+            WriteAudioUntil(audioOutputs, mixer, audioBlock, duration, true);
             if (written == 0) throw new IOException("No video frames were accepted by the encoder.");
+            if (cameraWriter != null && cameraWritten == 0) throw new IOException("No camera-track frames were accepted by the encoder.");
             writer?.Finish();
+            cameraWriter?.Finish();
+            voiceWriter?.Finish();
+            systemWriter?.Finish();
+            if (cameraDropped > 0) ReportDiagnostic($"Camera track skipped {cameraDropped} frame slots.");
             if (gifWriter != null)
             {
                 capture.Dispose();
                 camera?.Dispose();
                 gifWriter.Finish(duration, ReportEncodingProgress, () => Volatile.Read(ref aborted) != 0);
             }
-            completed.TrySetResult(new(options.OutputPath, TimeSpan.FromTicks(duration), written, dropped, mixer.Discontinuities, Encoder));
+            LessonSession? lesson = separate ? BuildLesson(width, height, duration, cameraPath, camera?.Info, voicePath, systemPath) : null;
+            completed.TrySetResult(new(options.OutputPath, TimeSpan.FromTicks(duration), written, dropped, mixer.Discontinuities, Encoder!, lesson));
         }
         catch (Exception ex)
         {
@@ -356,6 +450,11 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
             {
                 try { File.Delete(options.OutputPath); }
                 catch (Exception cleanup) { ex = new AggregateException("Recording failed and its incomplete output could not be removed.", ex, cleanup); }
+            }
+            foreach (string companion in ownedCompanions)
+            {
+                try { File.Delete(companion); }
+                catch (Exception cleanup) { ex = new AggregateException("Recording failed and an incomplete lesson track could not be removed.", ex, cleanup); }
             }
             prepared.TrySetException(ex); started.TrySetException(ex); completed.TrySetException(ex);
         }
@@ -380,19 +479,55 @@ public sealed class ScreenRecorder : IDisposable, IAsyncDisposable
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
     }
 
-    private static void WriteAudioUntil(MediaFoundationWriter? writer, AudioMixer mixer, short[] block,
-        ref long firstFrame, long until, bool enabled, bool partial = false)
+    /// <summary>One audio destination and the mixer sources it receives.</summary>
+    private sealed class AudioOutput(MediaFoundationWriter writer, int sources)
     {
-        if (!enabled || writer == null) return;
+        public MediaFoundationWriter Writer { get; } = writer;
+        public int Sources { get; } = sources;
+        public long Frame;
+    }
+
+    private static void WriteAudioUntil(List<AudioOutput> outputs, AudioMixer mixer, short[] block, long until, bool partial = false)
+    {
         long endFrame = (long)((Int128)until * AudioMixer.SampleRate / TimeSpan.TicksPerSecond);
-        while (firstFrame + block.Length / 2 <= endFrame || (partial && firstFrame < endFrame))
+        foreach (AudioOutput audio in outputs)
         {
-            int count = (int)Math.Min(block.Length / 2, endFrame - firstFrame);
-            Span<short> output = block.AsSpan(0, count * 2);
-            mixer.Read(firstFrame, output);
-            writer.WriteAudio(output, firstFrame);
-            firstFrame += count;
+            while (audio.Frame + block.Length / 2 <= endFrame || (partial && audio.Frame < endFrame))
+            {
+                int count = (int)Math.Min(block.Length / 2, endFrame - audio.Frame);
+                Span<short> output = block.AsSpan(0, count * 2);
+                mixer.Read(audio.Frame, output, audio.Sources);
+                audio.Writer.WriteAudio(output, audio.Frame);
+                audio.Frame += count;
+            }
         }
+    }
+
+    private int CameraBitrate(CameraCaptureInfo camera) =>
+        (int)Math.Clamp((long)camera.Width * camera.Height * options.CameraFramesPerSecond / 8, 1_000_000L, Math.Max(1_000_000L, options.VideoBitrate));
+
+    private LessonSession BuildLesson(int width, int height, long duration, string? cameraPath, CameraCaptureInfo? camera,
+        string? voicePath, string? systemPath)
+    {
+        List<LessonTrack> tracks = [new(LessonTrackKind.Screen, options.OutputPath, HasVideo: true, HasAudio: false, width, height)];
+        if (cameraPath != null && camera != null)
+            tracks.Add(new(LessonTrackKind.Camera, cameraPath, HasVideo: true, HasAudio: options.CaptureMicrophone, camera.Width, camera.Height));
+        if (voicePath != null) tracks.Add(new(LessonTrackKind.Voice, voicePath, HasVideo: false, HasAudio: true));
+        if (systemPath != null) tracks.Add(new(LessonTrackKind.SystemAudio, systemPath, HasVideo: false, HasAudio: true));
+        return new()
+        {
+            DurationSeconds = TimeSpan.FromTicks(duration).TotalSeconds,
+            ScreenWidth = width,
+            ScreenHeight = height,
+            Tracks = tracks,
+            Face = new()
+            {
+                Position = options.CameraPosition,
+                Shape = options.CameraShape,
+                WidthPercent = options.CameraWidthPercent,
+                Margin = options.CameraMargin
+            }
+        };
     }
 
     public void Dispose()

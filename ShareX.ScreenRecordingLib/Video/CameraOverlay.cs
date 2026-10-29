@@ -54,16 +54,18 @@ internal sealed unsafe class CameraOverlay : IDisposable
     public Rectangle Bounds { get; }
     public bool HasFrame { get; private set; }
 
+    /// <param name="fullFrame">Lesson mode: fill a camera-sized canvas with the whole, uncropped camera image.</param>
     public CameraOverlay(GraphicsDevice graphics, CameraCaptureInfo info, Guid subtype, int stride, uint matrix, uint range,
-        RecordingOptions options, int recordingWidth, int recordingHeight)
+        RecordingOptions options, int recordingWidth, int recordingHeight, bool fullFrame = false)
     {
+        if (fullFrame) options = options with { CameraShape = CameraOverlayShape.Rectangle };
         this.graphics = graphics;
         this.info = info;
         defaultStride = stride;
         format = subtype == VideoFormatGuids.NV12 ? Format.NV12 : subtype == VideoFormatGuids.YUY2 ? Format.YUY2 : Format.B8G8R8A8_UNorm;
         rowBytes = checked(info.Width * (format == Format.NV12 ? 1 : format == Format.YUY2 ? 2 : 4));
         imageBytes = checked(rowBytes * info.Height * (format == Format.NV12 ? 3 : 2) / 2);
-        Bounds = GetBounds(options, info, recordingWidth, recordingHeight);
+        Bounds = fullFrame ? new(0, 0, info.Width, info.Height) : GetBounds(options, info, recordingWidth, recordingHeight);
         try
         {
             videoDevice = graphics.Device.QueryInterface<ID3D11VideoDevice>();

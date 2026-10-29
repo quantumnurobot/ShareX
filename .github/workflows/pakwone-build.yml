@@ -1,0 +1,78 @@
+name: Build Pakwone ShareX (lesson mode)
+
+on:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    env:
+      SOLUTION_FILE_PATH: ShareX.sln
+      CONFIGURATION: Release
+      PLATFORM: x64
+      RUNTIME_ID: win-x64
+      FFMPEG_VERSION: "9.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set APP_VERSION
+        run: |
+          $content = Get-Content "Directory.build.props" -Raw
+          $version = [regex]::Match($content, '<Version>([0-9]+(?:\.[0-9]+){1,3})</Version>').Groups[1].Value
+          echo $version
+          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Restore NuGet packages
+        run: dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SOLUTION_FILE_PATH }}"
+
+      - name: Build
+        run: dotnet build --no-restore --configuration "${{ env.CONFIGURATION }}" -p:Platform="${{ env.PLATFORM }}" --self-contained true /m "${{ env.SOLUTION_FILE_PATH }}"
+
+      - name: Download FFmpeg
+        run: |
+          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          $downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n${{ env.FFMPEG_VERSION }}-latest-win64-gpl-${{ env.FFMPEG_VERSION }}.zip"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+          $ffmpeg = Get-ChildItem -Path $extractPath -Filter "ffmpeg.exe" -Recurse -File | Select-Object -First 1
+          if ($null -eq $ffmpeg) { throw "ffmpeg.exe was not found in the downloaded archive." }
+          Copy-Item -LiteralPath $ffmpeg.FullName -Destination "${{ github.workspace }}\ShareX\bin\${{ env.CONFIGURATION }}\${{ env.RUNTIME_ID }}\ffmpeg.exe" -Force
+          echo $ffmpeg.DirectoryName >> $env:GITHUB_PATH
+
+      - name: Lesson mode tests (real FFmpeg)
+        run: dotnet run --project Pakwone.Tests\LessonExportTests\LessonExportTests.csproj --configuration "${{ env.CONFIGURATION }}" -p:Platform="${{ env.PLATFORM }}"
+
+      - name: Package (portable + installer)
+        run: |
+          & "ShareX.Setup\bin\${{ env.CONFIGURATION }}\win-x64\ShareX.Setup.exe" -silent -job "${{ env.CONFIGURATION }}" -platform "${{ env.PLATFORM }}"
+          Get-ChildItem Output
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pakwone-ShareX-portable-x64
+          path: Output\ShareX-${{ env.APP_VERSION }}-portable-${{ env.PLATFORM }}.zip
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pakwone-ShareX-setup-x64
+          path: Output\ShareX-${{ env.APP_VERSION }}-setup-${{ env.PLATFORM }}.exe

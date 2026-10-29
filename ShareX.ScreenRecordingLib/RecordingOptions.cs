@@ -63,6 +63,13 @@ public sealed record RecordingOptions
     /// <summary>For MP4, reject a software video encoder rather than silently increasing CPU usage.</summary>
     public bool RequireHardwareEncoder { get; init; } = true;
     public TimeSpan Duration { get; init; }
+    /// <summary>
+    /// Lesson mode (MP4 only): instead of burning the camera into the screen and mixing the audio, write
+    /// separately editable tracks beside OutputPath that share one clock: the screen video (no audio),
+    /// "&lt;name&gt;.camera.mp4" (full camera frame + microphone), "&lt;name&gt;.voice.m4a" (microphone
+    /// without a camera) and "&lt;name&gt;.system-audio.m4a". Commit them with <see cref="LessonFiles.Commit"/>.
+    /// </summary>
+    public bool SeparateTracks { get; init; }
 
     internal bool IsGif => Path.GetExtension(OutputPath).Equals(".gif", StringComparison.OrdinalIgnoreCase);
     internal bool HasAudio => !IsGif && (CaptureSystemAudio || CaptureMicrophone);
@@ -79,6 +86,7 @@ public sealed record RecordingOptions
         if (!IsGif && VideoBitrate is < 100_000 or > 200_000_000) throw new ArgumentOutOfRangeException(nameof(VideoBitrate));
         if (!IsGif && AudioBitrate is not (96_000 or 128_000 or 160_000 or 192_000)) throw new ArgumentOutOfRangeException(nameof(AudioBitrate));
         if (Duration < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(Duration));
+        if (SeparateTracks && IsGif) throw new ArgumentException("Lesson mode records separate MP4/M4A tracks and cannot write a GIF.", nameof(SeparateTracks));
         if (!Enum.IsDefined(CameraResolution)) throw new ArgumentOutOfRangeException(nameof(CameraResolution));
         if (!Enum.IsDefined(CameraPosition)) throw new ArgumentOutOfRangeException(nameof(CameraPosition));
         if (!Enum.IsDefined(CameraShape)) throw new ArgumentOutOfRangeException(nameof(CameraShape));
@@ -92,5 +100,6 @@ public sealed record RecordingOptions
 
 public sealed record VideoEncoderInfo(string Name, bool IsHardwareAccelerated, bool IsD3D11Aware);
 
+/// <param name="Lesson">Lesson mode only: the recorded tracks, with absolute paths until committed.</param>
 public sealed record RecordingResult(string OutputPath, TimeSpan Duration, long VideoFrames,
-    long DroppedVideoFrames, long AudioDiscontinuities, VideoEncoderInfo Encoder);
+    long DroppedVideoFrames, long AudioDiscontinuities, VideoEncoderInfo Encoder, LessonSession? Lesson = null);

@@ -34,36 +34,59 @@ namespace ShareX.ScreenRecordingLib.Encoding;
 internal sealed unsafe class MediaFoundationWriter : IDisposable
 {
     private IMFSinkWriter writer = null!;
-    private IMFDXGIDeviceManager deviceManager = null!;
-    private int videoStream, audioStream;
+    private IMFDXGIDeviceManager? deviceManager;
+    private int videoStream = -1, audioStream = -1;
     private bool started, finalized;
-    public VideoEncoderInfo Encoder { get; private set; } = null!;
+    /// <summary>The H.264 encoder, or null for an audio-only (.m4a) writer.</summary>
+    public VideoEncoderInfo? Encoder { get; private set; }
     public BindFlags EncoderBindFlags { get; private set; }
 
     public MediaFoundationWriter(GraphicsDevice graphics, RecordingOptions options, int width, int height)
+        : this(graphics, options.OutputPath, width, height, options.FramesPerSecond, options.VideoBitrate,
+            options.RequireHardwareEncoder, options.HasAudio ? options.AudioBitrate : 0)
     {
+    }
+
+    /// <summary>
+    /// An MPEG-4 writer. Pass a null <paramref name="graphics"/> and zero size for an audio-only file,
+    /// and zero <paramref name="audioBitrate"/> for a video-only file.
+    /// </summary>
+    public MediaFoundationWriter(GraphicsDevice? graphics, string path, int width, int height, int fps,
+        int videoBitrate, bool requireHardwareEncoder, int audioBitrate)
+    {
+        bool video = graphics != null && width > 0 && height > 0;
+        if (!video && audioBitrate <= 0) throw new ArgumentException("A writer needs a video or an audio stream.");
         try
         {
-            deviceManager = MediaFactory.MFCreateDXGIDeviceManager();
-            deviceManager.ResetDevice(graphics.Device).CheckError();
             using IMFAttributes attributes = MediaFactory.MFCreateAttributes(5);
             attributes.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, 1u).CheckError();
             attributes.Set(SinkWriterAttributeKeys.LowLatency, 1u).CheckError();
             // The fixed-size GPU pool bounds in-flight samples. Do not make WriteSample wait for presentation time.
             attributes.Set(SinkWriterAttributeKeys.DisableThrottling, 1u).CheckError();
             attributes.Set(TranscodeAttributeKeys.TranscodeContainertype, TranscodeContainerTypeGuids.Mpeg4).CheckError();
-            attributes.Set(SinkWriterAttributeKeys.D3DManager, deviceManager).CheckError();
-            writer = MediaFactory.MFCreateSinkWriterFromURL(options.OutputPath, null!, attributes);
-            using IMFMediaType videoOut = CreateVideoType(VideoFormatGuids.H264, width, height, options.FramesPerSecond);
-            videoOut.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)options.VideoBitrate).CheckError();
-            videoOut.Set(MediaTypeAttributeKeys.Mpeg2Profile, 77u).CheckError(); // H.264 Main
-            videoStream = writer.AddStream(videoOut);
-            using IMFMediaType videoIn = CreateVideoType(VideoFormatGuids.NV12, width, height, options.FramesPerSecond);
-            writer.SetInputMediaType(videoStream, videoIn, null!);
-            if (options.HasAudio) AddAudio(options.AudioBitrate);
-            Encoder = InspectVideoEncoder();
-            if (options.RequireHardwareEncoder && (!Encoder.IsHardwareAccelerated || !Encoder.IsD3D11Aware))
-                throw new NotSupportedException($"Windows selected '{Encoder.Name}', which does not provide D3D11 hardware video encoding on this GPU. Disable RequireHardwareEncoder to allow Windows software encoding.");
+            if (video)
+            {
+                deviceManager = MediaFactory.MFCreateDXGIDeviceManager();
+                deviceManager.ResetDevice(graphics!.Device).CheckError();
+                attributes.Set(SinkWriterAttributeKeys.D3DManager, deviceManager).CheckError();
+            }
+            writer = MediaFactory.MFCreateSinkWriterFromURL(path, null!, attributes);
+            if (video)
+            {
+                using IMFMediaType videoOut = CreateVideoType(VideoFormatGuids.H264, width, height, fps);
+                videoOut.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)videoBitrate).CheckError();
+                videoOut.Set(MediaTypeAttributeKeys.Mpeg2Profile, 77u).CheckError(); // H.264 Main
+                videoStream = writer.AddStream(videoOut);
+                using IMFMediaType videoIn = CreateVideoType(VideoFormatGuids.NV12, width, height, fps);
+                writer.SetInputMediaType(videoStream, videoIn, null!);
+            }
+            if (audioBitrate > 0) AddAudio(audioBitrate);
+            if (video)
+            {
+                Encoder = InspectVideoEncoder();
+                if (requireHardwareEncoder && (!Encoder.IsHardwareAccelerated || !Encoder.IsD3D11Aware))
+                    throw new NotSupportedException($"Windows selected '{Encoder.Name}', which does not provide D3D11 hardware video encoding on this GPU. Disable RequireHardwareEncoder to allow Windows software encoding.");
+            }
             writer.BeginWriting();
             started = true;
         }
@@ -197,7 +220,7 @@ internal sealed unsafe class MediaFoundationWriter : IDisposable
     {
         if (started && !finalized)
         {
-            writer.NotifyEndOfSegment(videoStream);
+            if (videoStream >= 0) writer.NotifyEndOfSegment(videoStream);
             writer.Finalize();
             finalized = true;
         }

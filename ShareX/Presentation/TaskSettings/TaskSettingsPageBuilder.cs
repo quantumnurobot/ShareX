@@ -586,10 +586,28 @@ internal sealed class TaskSettingsPageBuilder
         NumericUpDown startDelay = Number(() => (decimal)capture.ScreenRecordStartDelay, value => capture.ScreenRecordStartDelay = (float)value, 0, 3600, 0.1m);
         BindEnabled(startDelay, startDelayEnabled);
 
+        // Lesson mode (Pakwone): separate, editable screen / face + voice / system sound tracks.
+        BoundValue<bool> separateTracks = new(capture.ScreenRecordSeparateTracks, value => capture.ScreenRecordSeparateTracks = value);
+        Control separateTracksCheck = Check("Record screen, face + voice, and system sound as separate editable tracks", separateTracks);
+        Control openLessonEditor = Check("Open the Lesson Editor after recording", () => capture.ScreenRecordOpenLessonEditor, value => capture.ScreenRecordOpenLessonEditor = value);
+        BindEnabled(openLessonEditor, separateTracks);
+        TextBlock lessonHint = new()
+        {
+            Text = "Saves name.mp4 (screen), name.camera.mp4 (face + voice), name.system-audio.m4a and name.lesson.json. Edit and blend them in Tools > Video > Lesson Editor.",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Opacity = 0.75
+        };
+        StackPanel lessonContent = new() { Spacing = 4 };
+        lessonContent.Children.Add(separateTracksCheck);
+        lessonContent.Children.Add(openLessonEditor);
+        lessonContent.Children.Add(lessonHint);
+        BindEnabled(lessonContent, native);
+
         return Page("capture-screen-recorder", Strings.TaskSettingsWindow_ScreenRecorder, LucideIcons.video,
             EnabledCard(_captureOverride, Strings.TaskSettingsWindow_NativeRecorder,
                 Check(Strings.TaskSettingsWindow_NativeRecorderEnabled, native),
                 showBar, systemAudio, systemAudioDevice, microphone, microphoneDevice, hardware, bitrate),
+            EnabledCard(_captureOverride, "Lesson mode", lessonContent),
             cameraPanel,
             EnabledCard(_captureOverride, Strings.TaskSettingsWindow_Recording,
                 Row(Strings.TaskSettingsWindow_ScreenRecordingFPS, Number(() => capture.ScreenRecordFPS, value => capture.ScreenRecordFPS = (int)value, 1, 120)),

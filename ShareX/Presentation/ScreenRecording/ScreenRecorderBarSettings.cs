@@ -66,6 +66,8 @@ internal sealed class ScreenRecorderBarSettings
         target.ScreenRecordMicrophoneDeviceId = Capture.ScreenRecordMicrophoneDeviceId;
         target.ScreenRecordMicrophoneGain = Capture.ScreenRecordMicrophoneGain;
         target.ScreenRecordCamera = Capture.ScreenRecordCamera;
+        target.ScreenRecordSeparateTracks = Capture.ScreenRecordSeparateTracks;
+        target.ScreenRecordOpenLessonEditor = Capture.ScreenRecordOpenLessonEditor;
         target.ScreenRecordCameraDeviceId = Capture.ScreenRecordCameraDeviceId;
         target.ScreenRecordCameraResolution = Capture.ScreenRecordCameraResolution;
         target.ScreenRecordCameraFPS = Capture.ScreenRecordCameraFPS;

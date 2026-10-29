@@ -14,6 +14,8 @@ on:
 jobs:
   build:
     name: Build
+    # Pakwone fork: the full upstream matrix runs only in ShareX/ShareX; forks use pakwone-build.yml.
+    if: github.repository == 'ShareX/ShareX'
     runs-on: windows-latest
     environment: release
 

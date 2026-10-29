@@ -280,7 +280,8 @@ internal sealed class MainMenuBuilder
             Tool(nameof(Strings.MainMenuBuilder_VideoConverter), Strings.MainMenuBuilder_VideoConverter, LucideIcons.file_video, () => TaskHelpers.OpenVideoConverter()),
             Tool(nameof(Strings.MainMenuBuilder_VideoPlayer), Strings.MainMenuBuilder_VideoPlayer, LucideIcons.circle_play, () => TaskHelpers.OpenVideoPlayer()),
             Tool(nameof(Strings.MainMenuBuilder_VideoThumbnailer), Strings.MainMenuBuilder_VideoThumbnailer, LucideIcons.clapperboard, () => TaskHelpers.OpenVideoThumbnailer()),
-            Tool(nameof(Strings.MainMenuBuilder_VideoTrimmer), Strings.MainMenuBuilder_VideoTrimmer, LucideIcons.scissors, () => TaskHelpers.OpenVideoTrimmer())
+            Tool(nameof(Strings.MainMenuBuilder_VideoTrimmer), Strings.MainMenuBuilder_VideoTrimmer, LucideIcons.scissors, () => TaskHelpers.OpenVideoTrimmer()),
+            Tool("LessonEditor", "Lesson Editor", LucideIcons.clapperboard, () => TaskHelpers.OpenLessonEditor())
         ]),
         new(Strings.MainMenuBuilder_ToolCategoryData,
         [

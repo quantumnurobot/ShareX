@@ -1,0 +1,229 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:ShareX.Tools"
+        xmlns:rec="using:ShareX.ScreenRecordingLib"
+        xmlns:theming="using:ShareX.AvaloniaUI.Theming"
+        x:Class="ShareX.Tools.LessonEditorWindow"
+        x:DataType="local:LessonEditorViewModel"
+        Title="Lesson Editor"
+        Background="{DynamicResource ShareX.Brush.Background.Main}"
+        Width="1180" Height="860" MinWidth="980" MinHeight="740"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="12">
+
+        <!-- Lesson file -->
+        <Border Classes="tool-panel">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                <TextBlock Classes="section-heading" Text="Lesson"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Classes="path-text" Text="{Binding LessonDisplay}" ToolTip.Tip="{Binding LessonFilePath}"/>
+                    <TextBlock Text="{Binding TracksText}" FontWeight="Normal" Opacity="0.75"/>
+                </StackPanel>
+                <Button Grid.Column="2" Command="{Binding BrowseCommand}" IsEnabled="{Binding CanBrowse}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.folder_open}"/>
+                        <TextBlock Text="Open lesson"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Players, layout and timeline -->
+        <Border Grid.Row="1" Classes="tool-panel">
+            <Grid RowDefinitions="*,Auto,Auto,Auto,Auto" RowSpacing="8">
+                <Grid ColumnDefinitions="*,300" ColumnSpacing="12">
+                    <Border Background="Black" CornerRadius="4" ClipToBounds="True">
+                        <Grid>
+                            <local:WindowsMediaPlayer x:Name="ScreenPlayer" IsVisible="{Binding HasLesson}"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel IsVisible="{Binding !HasLesson}" Spacing="12" IsHitTestVisible="False"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.clapperboard}" FontSize="36"
+                                           HorizontalAlignment="Center" Foreground="White"/>
+                                <TextBlock Text="Open a lesson recording, or drop its .lesson.json here" Foreground="White" FontWeight="Normal"/>
+                            </StackPanel>
+                            <TextBlock Text="SCREEN" Margin="8" FontSize="11" Foreground="White" Opacity="0.7"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False"/>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" RowSpacing="8">
+                        <Border Background="Black" CornerRadius="4" Height="200" ClipToBounds="True">
+                            <Grid>
+                                <local:WindowsMediaPlayer x:Name="FacePlayer" IsVisible="{Binding HasFaceTrack}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <TextBlock IsVisible="{Binding !HasFaceTrack}" Text="No face track" Foreground="White"
+                                           FontWeight="Normal" Opacity="0.7" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <TextBlock Text="FACE + VOICE" Margin="8" FontSize="11" Foreground="White" Opacity="0.7"
+                                           HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False"/>
+                            </Grid>
+                        </Border>
+                        <Border Grid.Row="1" CornerRadius="4" Background="{DynamicResource ShareX.Brush.Control.Background}">
+                            <local:LessonLayoutPreview Accent="{DynamicResource ShareX.Brush.Accent}" Margin="4"/>
+                        </Border>
+                        <TextBlock Grid.Row="2" Text="Layout of the finished lesson. Drag your face to move it."
+                                   FontWeight="Normal" Opacity="0.75" TextWrapping="Wrap"/>
+                    </Grid>
+                </Grid>
+
+                <!-- Transport -->
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Command="{Binding StepBackwardCommand}" IsEnabled="{Binding CanEdit}" Width="40" ToolTip.Tip="Back one frame">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.step_back}"/>
+                        </Button>
+                        <Button Command="{Binding TogglePlayCommand}" IsEnabled="{Binding CanEdit}" Width="40" ToolTip.Tip="{Binding PlayActionText}">
+                            <Grid>
+                                <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.play}" IsVisible="{Binding !IsPlaying}"/>
+                                <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.pause}" IsVisible="{Binding IsPlaying}"/>
+                            </Grid>
+                        </Button>
+                        <Button Command="{Binding StepForwardCommand}" IsEnabled="{Binding CanEdit}" Width="40" ToolTip.Tip="Forward one frame">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.step_forward}"/>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding PositionText}" FontWeight="Normal"/>
+                        <TextBlock Text="/" FontWeight="Normal"/>
+                        <TextBlock Text="{Binding DurationText}" FontWeight="Normal"/>
+                        <TextBlock Text="   Edited length:" FontWeight="Normal" Opacity="0.75"/>
+                        <TextBlock Text="{Binding EditedDurationText}" FontWeight="Normal"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <local:LessonTimeline Grid.Row="2" Height="64" IsEnabled="{Binding CanEdit}"
+                                      Accent="{DynamicResource ShareX.Brush.Accent}"
+                                      TrackBackground="{DynamicResource ShareX.Brush.Control.Background}"
+                                      ToolTip.Tip="Drag the blue handles to trim. Click to move the playhead. Keys: Space play, I/O trim, C cut, Esc cancel cut."/>
+
+                <!-- Trim and cut -->
+                <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="8" IsEnabled="{Binding CanEdit}">
+                    <Button Command="{Binding SetStartCommand}" ToolTip.Tip="Start the lesson at the playhead (I)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.arrow_left_to_line}"/>
+                            <TextBlock Text="{Binding StartTimeText, StringFormat='Start {0}'}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="1" Command="{Binding SetEndCommand}" ToolTip.Tip="End the lesson at the playhead (O)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.arrow_right_to_line}"/>
+                            <TextBlock Text="{Binding EndTimeText, StringFormat='End {0}'}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="2" Command="{Binding MarkCutCommand}"
+                            ToolTip.Tip="Click once where a mistake starts and again where it ends to remove that part (C)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.scissors}"/>
+                            <TextBlock Text="{Binding CutButtonText}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="3" Command="{Binding CancelMarkCommand}" IsVisible="{Binding HasMarkIn}" Width="40" ToolTip.Tip="Cancel this cut (Esc)">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.x}"/>
+                    </Button>
+                    <ScrollViewer Grid.Column="4" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Cuts}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="6"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="rec:LessonCut">
+                                    <Button Click="OnRemoveCutClick" ToolTip.Tip="Remove this cut (put the section back)">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="{Binding Start, StringFormat='Cut {0:0.0}s'}" FontWeight="Normal"/>
+                                            <TextBlock Text="{Binding End, StringFormat='– {0:0.0}s'}" FontWeight="Normal"/>
+                                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.trash_2}"/>
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <Button Grid.Column="5" Command="{Binding ResetEditsCommand}" ToolTip.Tip="Undo all edits">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.rotate_ccw}"/>
+                            <TextBlock Text="Reset"/>
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <ProgressBar Grid.Row="4" Height="4" IsVisible="{Binding IsWorking}"
+                             IsIndeterminate="{Binding IsLoading}" Value="{Binding Progress}"/>
+            </Grid>
+        </Border>
+
+        <!-- Face and sound -->
+        <Border Grid.Row="2" Classes="tool-panel" IsEnabled="{Binding CanEdit}">
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
+                <StackPanel Spacing="8" IsEnabled="{Binding HasFaceTrack}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.user}"/>
+                        <TextBlock Classes="section-heading" Text="Face"/>
+                        <CheckBox IsChecked="{Binding ShowFace}" Content="Show my face"/>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="90,*,90,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8" IsEnabled="{Binding ShowFace}">
+                        <TextBlock Classes="row-label" Text="Placement" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding PlacementNames}" SelectedIndex="{Binding FacePlacementIndex}" HorizontalAlignment="Stretch"/>
+                        <TextBlock Grid.Column="2" Classes="row-label" Text="Shape" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="3" ItemsSource="{Binding ShapeNames}" SelectedIndex="{Binding FaceShapeIndex}" HorizontalAlignment="Stretch"/>
+                        <TextBlock Grid.Row="1" Classes="row-label" Text="{Binding FaceWidthPercent, StringFormat='Size {0:0}%'}" VerticalAlignment="Center"/>
+                        <Slider Grid.Row="1" Grid.Column="1" Minimum="5" Maximum="60" Value="{Binding FaceWidthPercent}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="row-label" Text="{Binding FaceMargin, StringFormat='Margin {0:0}'}" VerticalAlignment="Center"/>
+                        <Slider Grid.Row="1" Grid.Column="3" Minimum="0" Maximum="200" Value="{Binding FaceMargin}"/>
+                        <TextBlock Grid.Row="2" Classes="row-label" Text="Left ↔ right" VerticalAlignment="Center" IsVisible="{Binding IsCustomPlacement}"/>
+                        <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding FaceX}" IsVisible="{Binding IsCustomPlacement}"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" Classes="row-label" Text="Top ↕ bottom" VerticalAlignment="Center" IsVisible="{Binding IsCustomPlacement}"/>
+                        <Slider Grid.Row="2" Grid.Column="3" Minimum="0" Maximum="1" Value="{Binding FaceY}" IsVisible="{Binding IsCustomPlacement}"/>
+                    </Grid>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.volume_2}"/>
+                        <TextBlock Classes="section-heading" Text="Sound"/>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="170,*,70" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                        <CheckBox IsChecked="{Binding IncludeVoice}" IsEnabled="{Binding HasVoice}" Content="My voice"/>
+                        <Slider Grid.Column="1" Minimum="0" Maximum="200" Value="{Binding VoiceVolumePercent}" IsEnabled="{Binding IncludeVoice}"/>
+                        <TextBlock Grid.Column="2" Text="{Binding VoiceVolumePercent, StringFormat='{}{0:0}%'}" VerticalAlignment="Center" FontWeight="Normal"/>
+                        <CheckBox Grid.Row="1" IsChecked="{Binding IncludeSystemAudio}" IsEnabled="{Binding HasSystemAudio}" Content="Computer sound"/>
+                        <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="200" Value="{Binding SystemVolumePercent}" IsEnabled="{Binding IncludeSystemAudio}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding SystemVolumePercent, StringFormat='{}{0:0}%'}" VerticalAlignment="Center" FontWeight="Normal"/>
+                    </Grid>
+                    <TextBlock Text="Your voice plays live with your face. Computer sound is heard in Preview and the export."
+                               FontWeight="Normal" Opacity="0.75" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Preview and export -->
+        <Border Grid.Row="3" Classes="tool-panel">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                <Button Command="{Binding PreviewCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Render 10 seconds of the finished lesson from the playhead">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.eye}"/>
+                        <TextBlock Text="Preview"/>
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="1" Command="{Binding ExportLessonCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Blend screen, face, voice and computer sound into one video">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.file_video}"/>
+                        <TextBlock Text="Export lesson"/>
+                    </StackPanel>
+                </Button>
+                <TextBlock Grid.Column="2" Text="{Binding StatusText}" IsVisible="{Binding HasStatus}" VerticalAlignment="Center"
+                           FontWeight="Normal" TextWrapping="Wrap" Margin="8,0"/>
+                <ComboBox Grid.Column="3" ItemsSource="{Binding TrackExportNames}" SelectedIndex="{Binding TrackExportIndex}"
+                          IsEnabled="{Binding CanEdit}" Width="210"/>
+                <Button Grid.Column="4" Command="{Binding ExportTrackCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Export just this track, with your trims and cuts">
+                    <TextBlock Text="Export track"/>
+                </Button>
+                <Button Grid.Column="5" Command="{Binding CancelCommand}" IsVisible="{Binding IsExporting}" Width="40" ToolTip.Tip="Cancel">
+                    <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.x}"/>
+                </Button>
+                <Button Grid.Column="6" Command="{Binding OpenOutputCommand}" IsEnabled="{Binding HasOutput}" Width="40" ToolTip.Tip="Show the exported file">
+                    <TextBlock Classes="icon" Text="{x:Static theming:LucideIcons.folder_open}"/>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
